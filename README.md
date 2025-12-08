@@ -52,7 +52,7 @@ cp .env.example .env
 # Edit .env and add: FINANCIAL_DATASETS_API_KEY=your-key
 
 # Optional: Install SDK for programmatic access
-uv add claude-code-sdk
+uv add claude-agent-sdk
 ```
 
 ## Usage

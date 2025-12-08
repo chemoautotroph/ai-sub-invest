@@ -177,15 +177,15 @@ async def run_hedge_fund_sdk(
         Analysis results dictionary
     """
     try:
-        from claude_code_sdk import query, ClaudeCodeOptions
+        from claude_agent_sdk import query, ClaudeAgentOptions
     except ImportError:
-        print("Error: claude-code-sdk not installed.")
-        print("Install with: pip install claude-code-sdk")
+        print("Error: claude-agent-sdk not installed.")
+        print("Install with: pip install claude-agent-sdk")
         sys.exit(1)
 
     project_root = get_project_root()
 
-    options = ClaudeCodeOptions(
+    options = ClaudeAgentOptions(
         cwd=str(project_root),
         allowed_tools=["Skill", "Read", "Bash"],
         max_turns=50,  # Allow enough turns for multi-analyst analysis

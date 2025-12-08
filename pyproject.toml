@@ -6,7 +6,7 @@ description = "ConsensusAI - Multi-analyst investment analysis using Claude Code
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "claude-code-sdk>=0.0.25",
+    "claude-agent-sdk>=0.0.25",
     "pandas>=2.1.0",
     "numpy>=1.24.0",
     "python-dotenv>=1.0.0",
