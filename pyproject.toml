@@ -19,9 +19,18 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
     "black>=23.7.0",
     "isort>=5.12.0",
     "flake8>=6.1.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "unit: unit tests that do not hit the network",
+    "integration: integration tests that hit real APIs (requires opt-in via -m integration)",
+    "expected_divergence: A/B compatibility tests where divergence from baseline is expected (Phase 2)",
 ]
 
 [build-system]

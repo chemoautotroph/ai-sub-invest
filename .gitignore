@@ -52,5 +52,12 @@ Thumbs.db
 # uv virtualenv (note the leading dot)
 .venv/
 
+# pytest / coverage artifacts
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
 # Backup files from manual editing
 *.bak
