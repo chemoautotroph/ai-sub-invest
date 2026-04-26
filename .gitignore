@@ -48,3 +48,9 @@ Thumbs.db
 
 # PDF files
 *.pdf
+
+# uv virtualenv (note the leading dot)
+.venv/
+
+# Backup files from manual editing
+*.bak
