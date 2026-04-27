@@ -77,6 +77,9 @@ for domain in \
     "api.financialdatasets.ai" \
     "query1.finance.yahoo.com" \
     "query2.finance.yahoo.com" \
+    "www.sec.gov" \
+    "data.sec.gov" \
+    "openinsider.com" \
     "finance.yahoo.com" \
     "update.code.visualstudio.com"; do
     echo "Resolving $domain..."
