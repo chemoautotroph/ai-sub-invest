@@ -356,3 +356,30 @@ def prices_to_df(prices: list[Price]) -> pd.DataFrame:
 def get_price_data(ticker: str, start_date: str, end_date: str, api_key: str = None) -> pd.DataFrame:
     prices = get_prices(ticker, start_date, end_date, api_key=api_key)
     return prices_to_df(prices)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 routing: USE_FREE_BACKEND env var swaps in the free aggregator
+# transparently. Persona scripts call these names exactly as before; the
+# rebind below substitutes the free-backend implementations only when the
+# env flag is set, so the paid-backend code paths above remain the default
+# and require no changes.
+#
+# Why end-of-file rebind (vs. branching at top): keeps the paid-backend
+# function bodies readable and unmodified, and lets module-internal callers
+# (e.g., get_price_data → get_prices) automatically pick up the routed
+# version since Python resolves name lookups at call time against module
+# globals, which the rebind has already overwritten.
+# ---------------------------------------------------------------------------
+
+_USE_FREE_BACKEND = os.getenv("USE_FREE_BACKEND", "0") == "1"
+
+if _USE_FREE_BACKEND:
+    from src.data_sources import aggregator as _free_backend
+
+    get_prices = _free_backend.get_prices
+    get_market_cap = _free_backend.get_market_cap
+    get_financial_metrics = _free_backend.get_financial_metrics
+    search_line_items = _free_backend.search_line_items
+    get_insider_trades = _free_backend.get_insider_trades
+    get_company_news = _free_backend.get_company_news

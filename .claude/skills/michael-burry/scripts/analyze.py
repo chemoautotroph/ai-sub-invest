@@ -71,7 +71,8 @@ def analyze_contrarian_signals(metrics: list) -> dict:
 def analyze_insider_activity(ticker: str, end_date: str) -> dict:
     """Check insider buying - Burry watches this closely."""
     try:
-        trades = get_insider_trades(ticker, end_date, 20)
+        # Phase 0 audit found this bug; was passing limit to start_date param
+        trades = get_insider_trades(ticker, end_date, limit=20)
     except:
         return {"score": 0, "max_score": 3, "details": "Could not fetch insider data"}
 

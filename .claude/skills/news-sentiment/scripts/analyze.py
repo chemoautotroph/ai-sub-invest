@@ -33,7 +33,8 @@ def analyze_headline_sentiment(headline: str) -> str:
 def analyze_news(ticker: str, end_date: str, limit: int = 20) -> dict:
     """Analyze recent news for sentiment."""
     try:
-        news = get_company_news(ticker, end_date, limit)
+        # Phase 0 audit found this bug; was passing limit to start_date param
+        news = get_company_news(ticker, end_date, limit=limit)
     except:
         return {
             "signal": "neutral",
