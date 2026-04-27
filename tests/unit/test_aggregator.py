@@ -719,3 +719,79 @@ def test_safe_growth_uses_abs_of_prior() -> None:
     assert agg._safe_growth(120.0, 100.0) == pytest.approx(0.20)
     # Loss-to-smaller-loss: from -100 → -50 is improvement, growth +50%
     assert agg._safe_growth(-50.0, -100.0) == pytest.approx(0.50)
+
+
+# ===========================================================================
+# total_debt as sum of components — replaces single-concept fallback
+# (cleanup post-Phase 1.6 per Known Risks #2 generalised to multi-concept)
+# ===========================================================================
+
+
+def _synthetic_debt_facts(component_values: dict[str, float], fy: int = 2023) -> Any:
+    """Build a CompanyFacts with the given debt components populated for one FY."""
+    from src.data_sources.sec_edgar import _parse_companyfacts
+    us_gaap: dict[str, Any] = {}
+    for concept, val in component_values.items():
+        us_gaap[concept] = {"units": {"USD": [{
+            "end": "2023-12-31", "val": val,
+            "accn": "X", "fy": fy, "fp": "FY",
+            "form": "10-K", "filed": "2024-02-15",
+        }]}}
+    body = json.dumps({
+        "cik": 999, "entityName": "Test Co",
+        "facts": {"us-gaap": us_gaap},
+    }).encode()
+    return _parse_companyfacts(body)
+
+
+def test_total_debt_sums_long_and_short_term() -> None:
+    """LongTermDebt 100 + ShortTermBorrowings 50 → total 150.
+
+    Synthetic edge case (per Common Conventions Mixed Test Inputs).
+    Validates the aggregation arithmetic on a value pair where overlap
+    isn't possible (long-term umbrella vs short-term).
+    """
+    facts = _synthetic_debt_facts({
+        "LongTermDebt": 100.0,
+        "ShortTermBorrowings": 50.0,
+    })
+    out = agg._values_by_fy(facts, "total_debt")
+    assert out == {2023: 150.0}
+
+
+def test_total_debt_partial_components_logs_which_hit(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Only LongTermDebt populated → total = LongTermDebt; log identifies which
+    components contributed (operations team needs traceability for unexpected
+    debt levels)."""
+    import logging
+    facts = _synthetic_debt_facts({"LongTermDebt": 100.0})
+    with caplog.at_level(logging.INFO, logger="src.data_sources.aggregator"):
+        out = agg._values_by_fy(facts, "total_debt")
+    assert out == {2023: 100.0}
+    assert "LongTermDebt" in caplog.text
+    assert "ShortTermBorrowings" not in caplog.text  # missing component absent from "hit" list
+
+
+def test_total_debt_all_empty_returns_none() -> None:
+    """No debt-related concepts populated → empty dict (downstream FinancialMetrics
+    sees None for debt_to_equity)."""
+    facts = _synthetic_debt_facts({})  # no concepts at all
+    out = agg._values_by_fy(facts, "total_debt")
+    assert out == {}
+
+
+def test_total_debt_double_count_warning_on_umbrella_and_sub_component(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """When both ``LongTermDebt`` (umbrella) AND a sub-component are reported,
+    log a warning so operators can spot the double-count case during review."""
+    import logging
+    facts = _synthetic_debt_facts({
+        "LongTermDebt": 100.0,
+        "LongTermDebtNoncurrent": 90.0,  # sub-component already in umbrella
+    })
+    with caplog.at_level(logging.WARNING, logger="src.data_sources.aggregator"):
+        agg._values_by_fy(facts, "total_debt")
+    assert "double-count" in caplog.text

@@ -22,6 +22,7 @@
 5. **不允许 silent failure**。所有 except 块要么记日志(用 `logging`,不用 print)要么 raise。**禁止** `except Exception: pass`。
 6. **数据契约**:每个 public 函数返回的数据结构用 Pydantic model 定义。Schema 漂移会被 Pydantic 立刻 catch 住,这是 financialdatasets API 替换的最重要保险。
 7. **commit 粒度**:每个 phase 至少一次 commit,每个 adapter 完成至少一次 commit,commit message 格式 `[phase-N] <module>: <action>`。
+8. **Default pytest runs unit only**:通过 `pyproject.toml` 的 `testpaths = ["tests/unit"]` 让无参数 `pytest` 只跑单元测试。Integration 必须显式 `pytest tests/integration -m integration`。这样 CI 默认避免网络抖动 + rate limit。
 
 ## Phase 0:Inventory(✅ 2026-04-26 完成,GO 决策)
 
@@ -114,6 +115,7 @@ tests/
 - **Distinguish legitimately empty from broken parser**:scrape/parse target 天然允许零结果(no insider trades、no 8-K in window 等)时,adapter 必须先验证页面结构是预期的那种,再返回空。如果结构缺失或异常,raise SchemaError。silent empty 严禁,因为它在下游伪装成有效数据。
 - **Corrupted fixtures must be reproducibly generated**:任何"故意破坏"的 fixture 文件必须由 fetcher 脚本(或同级脚本)以显式破坏步骤生成,且文件头加 `<!-- DELIBERATELY CORRUPTED -->` 标记。手工编辑 fixture 严禁。
 - **Mixed test inputs**:用真实 fixture 数值做 magnitude-calibration 测试(reviewer 可对照公开财报核 sanity),用合成 sentinel 做 boundary/edge 测试(精确算术必须可断言)。每种都在注释里标注来源(例如 `# from NVDA 10-K FY2024` 或 `# synthetic edge case`)。
+- **Period anchoring**:SEC XBRL 流概念(NetIncomeLoss、Revenues)的 `end` 是 fiscal close 日期,瞬时概念(StockholdersEquity、EntityCommonStockSharesOutstanding)的 `end` 是 filing/reporting 日期 —— 两者差几周。跨概念合成记录(LineItem / FinancialMetrics)时,join key 必须是 `fy`(fiscal year)而不是 `end`。同 fy 即同周期,不受 end-date 漂移影响。
 
 ### 1.1 cache.py(必须最先写)
 

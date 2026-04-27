@@ -183,7 +183,20 @@ LINEITEM_CONCEPT_MAP: Final[dict[str, list[str]]] = {
     "current_liabilities": ["LiabilitiesCurrent"],
     "total_assets": ["Assets"],
     "total_liabilities": ["Liabilities"],
-    "total_debt": ["LongTermDebt"],
+    # total_debt is composed (summed) across components rather than one-of fallback,
+    # because real-world debt rarely fits a single SEC concept. Aggregator's
+    # _values_by_fy("total_debt") is the special-case entry point that consumes
+    # this list. Caveat: companies that report BOTH the umbrella `LongTermDebt`
+    # AND its sub-components (LongTermDebtCurrent + LongTermDebtNoncurrent)
+    # will double-count. In practice SEC filers tend to report one or the other,
+    # not both — the warning in _aggregate_debt_components flags any overlap.
+    "total_debt_components": [
+        "LongTermDebt",
+        "LongTermDebtNoncurrent",
+        "ShortTermBorrowings",
+        "LongTermDebtCurrent",
+        "DebtCurrent",
+    ],
     "stockholders_equity": ["StockholdersEquity"],
     "shareholders_equity": ["StockholdersEquity"],  # alias used by some persona
     "outstanding_shares": [
@@ -405,12 +418,18 @@ def search_line_items(
     api_key: str | None = None,
     *,
     cache: Cache | None = None,
-    _facts: Any = None,  # test seam; production callers don't supply this
+    _facts: Any = None,
 ) -> list[LineItem]:
     """LineItem rows with the requested semantic fields populated.
 
     Cache 7d (reuses financial_metrics TTL — both come from the same
     SEC daily JSON, no need for a separate constant).
+
+    Internal:
+        ``_facts`` is a test seam — production callers must never supply it.
+        Tests pass a pre-parsed ``CompanyFacts`` to bypass the cache + network
+        and exercise pure assembly logic. When provided, no cache lookup or
+        write is performed.
     """
     cache = cache or Cache()
     key = _line_items_cache_key(ticker, line_items, end_date, period, limit)
@@ -634,6 +653,9 @@ def _values_by_fy(facts: Any, field: str) -> dict[int, float]:
     instant concepts (shares, equity) report end-date a few weeks past the
     period anchor concepts (revenue, NI).
     """
+    if field == "total_debt":
+        return _aggregate_debt_components(facts)
+
     field, concept_used, dps = _resolve_field_concept(facts, field)
     if not dps:
         return {}
@@ -651,6 +673,63 @@ def _values_by_fy(facts: Any, field: str) -> dict[int, float]:
         # Same fy may appear multiple times (10-K + amendments); sec_edgar
         # already dedups by (start, end, fp, fy) so we just take what's here
         out[dp.fy] = dp.val * sign
+    return out
+
+
+def _aggregate_debt_components(facts: Any) -> dict[int, float]:
+    """Sum debt-related concepts per fiscal year.
+
+    Spec § Phase 0 决策 + cleanup: total_debt is a composite, not a one-of
+    fallback. We sum across all available components and log which contributed
+    for traceability. Empty (no component had data for any fy) → empty dict.
+
+    Double-count caveat: an SEC filer that reports both the umbrella
+    ``LongTermDebt`` AND its components (``LongTermDebtCurrent`` +
+    ``LongTermDebtNoncurrent``) double-counts here. We log a warning when
+    that overlap is detected so it's visible without breaking the call.
+    """
+    components = LINEITEM_CONCEPT_MAP.get("total_debt_components", [])
+    component_maps: dict[str, dict[int, float]] = {}
+    for concept in components:
+        dps = _sec_edgar_mod._datapoints_for_concept(facts, concept, "USD")
+        m: dict[int, float] = {}
+        for dp in dps:
+            if dp.fp != "FY" or dp.fy is None:
+                continue
+            if dp.start is not None and (dp.end - dp.start).days < 350:
+                continue
+            m[dp.fy] = dp.val
+        if m:
+            component_maps[concept] = m
+
+    if not component_maps:
+        logger.warning(
+            "aggregator total_debt: none of %s yielded data — returning empty",
+            components,
+        )
+        return {}
+
+    out: dict[int, float] = {}
+    all_fys: set[int] = set()
+    for m in component_maps.values():
+        all_fys.update(m.keys())
+    for fy in all_fys:
+        hit = [c for c, m in component_maps.items() if fy in m]
+        out[fy] = sum(component_maps[c][fy] for c in hit)
+        logger.info(
+            "aggregator total_debt fy=%d composed of %s = %.2e",
+            fy, hit, out[fy],
+        )
+        # Double-count check: umbrella + sub-component pair both present
+        if "LongTermDebt" in hit and (
+            "LongTermDebtCurrent" in hit or "LongTermDebtNoncurrent" in hit
+        ):
+            logger.warning(
+                "aggregator total_debt fy=%d possible double-count: "
+                "umbrella LongTermDebt AND a sub-component both populated; "
+                "components hit = %s",
+                fy, hit,
+            )
     return out
 
 
