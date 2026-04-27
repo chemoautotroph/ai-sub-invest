@@ -55,6 +55,15 @@ cp .env.example .env
 uv add claude-agent-sdk
 ```
 
+## Free Backend (no paid API required)
+
+Set `USE_FREE_BACKEND=1` and `SEC_EDGAR_USER_AGENT="Name email"` in `.env` to
+route all six `src/tools/api.py` data calls through `src/data_sources/aggregator`,
+which assembles the same Pydantic shapes from SEC EDGAR XBRL + yfinance + OpenInsider.
+Persona scripts work unchanged. See [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) for
+the full enable/disable instructions, env var requirements, firewall whitelist,
+and known limitations.
+
 ## Usage
 
 ### Via Claude Code Chat
