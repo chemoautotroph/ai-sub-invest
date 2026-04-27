@@ -59,5 +59,8 @@ Thumbs.db
 htmlcov/
 coverage.xml
 
+# free-backend SQLite cache (persisted to host bind mount, never committed)
+.cache/
+
 # Backup files from manual editing
 *.bak

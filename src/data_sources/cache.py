@@ -2,6 +2,15 @@
 
 Schema and TTL values are pinned to PROJECT_SPEC.md Phase 0 决议. Any change
 here must update the spec first; ``test_cache.py`` enforces both.
+
+Serialization protocol
+----------------------
+The cache stores raw ``bytes`` only — it never JSON-encodes, pickles, or
+otherwise interprets payloads. **Callers own (de)serialization**: each adapter
+(``sec_edgar.py``, ``yfinance_adapter.py``, etc.) decides whether to use
+``json.dumps(...).encode()``, ``pickle.dumps(...)``, or another format, and
+must reverse it on read. This keeps the cache layer dumb and lets adapters
+pick the format that best fits their payload (e.g. dataframes vs JSON).
 """
 from __future__ import annotations
 
@@ -13,6 +22,12 @@ from typing import Final
 
 
 logger = logging.getLogger(__name__)
+
+
+# Default DB lives under /workspace (host bind mount in the devcontainer) so
+# the cache survives container rebuilds. Phase 4 verification matrix relies on
+# this — without persistence we'd hammer SEC every rerun.
+DEFAULT_DB_PATH: Final[Path] = Path("/workspace/.cache/cache.db")
 
 
 # Module-level alias so unit tests can patch the clock (see frozen_clock fixture).
@@ -54,8 +69,8 @@ class Cache:
     with ``database is locked``.
     """
 
-    def __init__(self, db_path: str | Path) -> None:
-        self.db_path = Path(db_path)
+    def __init__(self, db_path: str | Path | None = None) -> None:
+        self.db_path = Path(db_path) if db_path is not None else DEFAULT_DB_PATH
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
@@ -94,6 +109,12 @@ class Cache:
         payload: bytes,
         ttl_seconds: int,
     ) -> None:
+        """Insert or replace ``(source, endpoint, key)`` with a fresh TTL window.
+
+        ``payload`` MUST be ``bytes`` — see module docstring for the
+        serialization protocol. The cache rejects ``str`` / dict at type-check
+        time and would silently corrupt non-bytes inputs at runtime.
+        """
         with self._connect() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO cache "

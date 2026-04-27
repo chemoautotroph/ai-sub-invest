@@ -28,9 +28,9 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
-    "unit: unit tests that do not hit the network",
-    "integration: integration tests that hit real APIs (requires opt-in via -m integration)",
-    "expected_divergence: A/B compatibility tests where divergence from baseline is expected (Phase 2)",
+    "unit: pure unit tests, no network",
+    "integration: hits real APIs, requires SEC_EDGAR_USER_AGENT and network",
+    "expected_divergence: A/B test where free backend output differs from paid (intentional)",
 ]
 
 [build-system]

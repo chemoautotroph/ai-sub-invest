@@ -220,6 +220,55 @@ def test_set_overwrites_existing_entry(
     assert cache.get("aggregator", "prices", "NVDA") == b"v2"
 
 
+def test_set_resets_ttl_window(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """重新 set 后,TTL 从新写入时刻重新计算.
+
+    护栏:其他 caller 假设 "我刚写完 = 至少能活 ttl 秒"。如果 INSERT OR REPLACE
+    保留了原 fetched_at 而只覆盖 payload,刚 set 完立即过期会导致 cache 永远
+    miss + 把外部 API 打爆。这个测试用 absolute 时间断言锁住该不变量。
+    """
+    cache = Cache(tmp_path / "c.db")
+    fake_time = [1000.0]
+    monkeypatch.setattr("src.data_sources.cache._now", lambda: fake_time[0])
+
+    cache.set("yfinance", "ohlcv", "NVDA", b"old", ttl_seconds=100)
+    fake_time[0] = 1090  # 距首次写入 90s,TTL=100,本应仍 hit
+    cache.set("yfinance", "ohlcv", "NVDA", b"new", ttl_seconds=100)  # 重写
+    fake_time[0] = 1180  # 距首次写入 180s 但距重写仅 90s
+    assert cache.get("yfinance", "ohlcv", "NVDA") == b"new"  # 还活着
+
+
+def test_corrupted_db_raises_clear_error(tmp_path: Path) -> None:
+    """损坏的 db 文件应该抛清晰异常,不是 silent return None.
+
+    Spec § "工程标准" 第 5 条:不允许 silent failure。如果 SQLite 在打开损坏
+    db 时 fallthrough 成空查询,会变成永久 cache miss + 疯狂打外部 API 撞限速。
+
+    实现细节:当前实现在 ``__init__`` 阶段 (PRAGMA journal_mode=WAL) 触发
+    sqlite3.DatabaseError,所以构造和读取都包进 ``pytest.raises`` 范围里——
+    无论错误抛在哪一阶段,大声 raise 都满足 "不 silent" 不变量;如果未来
+    改成 lazy init,这个测试依然成立 (get() 仍会 raise)。
+    """
+    db_path = tmp_path / "broken.db"
+    db_path.write_bytes(b"this is not sqlite")
+    with pytest.raises(sqlite3.DatabaseError):
+        cache = Cache(db_path)
+        cache.get("yfinance", "ohlcv", "NVDA")
+
+
+def test_default_db_path_under_workspace_cache(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """没传 db_path 时应该落在 host bind mount 下 (容器重建后仍存在).
+
+    护栏:Phase 4 verification matrix 重跑依赖持久化 cache,不能写到容器
+    ephemeral fs (例如 /tmp 或容器内 site-packages 旁边)。
+    """
+    fake_default = tmp_path / "subdir" / "cache.db"
+    monkeypatch.setattr("src.data_sources.cache.DEFAULT_DB_PATH", fake_default)
+    cache = Cache()  # 无参数
+    assert cache.db_path == fake_default
+    assert fake_default.exists()
+
+
 def test_schema_matches_spec(cache: Cache) -> None:
     """Schema columns must match PROJECT_SPEC.md SQL DDL exactly.
 
