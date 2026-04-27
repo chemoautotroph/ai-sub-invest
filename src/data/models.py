@@ -93,6 +93,13 @@ class InsiderTrade(BaseModel):
     shares_owned_after_transaction: float | None
     security_title: str | None
     filing_date: str
+    # Phase 0 决策 #1:Form 4 trans code (P/S/A/M/G/D/...) and a 'value' alias.
+    # Persona scripts (michael-burry, news-sentiment) read these — the fields
+    # are added with default None so existing call sites (paid backend) keep
+    # working unchanged. Free-backend openinsider parser populates them.
+    transaction_type: str | None = None
+    value: float | None = None
+
 
 
 class InsiderTradeResponse(BaseModel):
