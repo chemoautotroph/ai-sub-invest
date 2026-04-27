@@ -103,6 +103,15 @@ tests/
 ├── test_yfinance_live.py
 └── test_openinsider_live.py
 ```
+
+### Common Conventions
+
+适用于所有 Phase 1 adapter(1.2 sec_edgar、1.3 yfinance_adapter、1.4 openinsider、1.6 aggregator)。每个 adapter 实现前回头对一遍这三条。
+
+- **Canonical empty schema**:adapter 没数据可返时(unknown ticker、no insider trades 等),返回与"有数据"相同的 schema,只是空(空 DataFrame 但仍带 OHLCV 列名;空 `list[InsiderTrade]`)。caller 只需一次检查(`df.empty` 或 `not trades`),不需要再做列存在性检查。
+- **Network/parser separation**:每个 adapter 恰好一个网络入口 `_fetch_*`,所有 parsing 是接受 bytes 或 str 输入的纯函数。测试 monkeypatch 这一个 fetcher,把真实 fixture 直接喂给 parser。
+- **Cache locality**:不缓存 derived/composite 值(例如 `market_cap = price × shares`)。缓存底层组件,让 composition 每次重算。避免分子分母两层 staleness 不一致。
+
 ### 1.1 cache.py(必须最先写)
 
 SQLite 缓存,schema:

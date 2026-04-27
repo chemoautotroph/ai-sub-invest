@@ -164,7 +164,12 @@ def get_market_cap(ticker: str) -> float | None:
 
     Per spec § 1.3: yfinance has been observed to return strings, ``None``,
     or zero on quirky tickers. We only return a float if it's strictly > 0;
-    otherwise ``None``. No cache here — market cap moves intraday.
+    otherwise ``None``.
+
+    Caching delegated to underlying components: shares_outstanding via
+    basic_info (30d TTL), price via OHLCV (1h or 30d TTL by recency).
+    Top-level cache would create staleness mismatch between numerator
+    and denominator.
     """
     info = _fetch_info(ticker)
     raw = info.get("marketCap")
