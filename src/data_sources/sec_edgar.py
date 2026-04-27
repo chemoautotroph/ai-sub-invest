@@ -150,7 +150,11 @@ class CompanyFacts(BaseModel):
 # (e.g. fundamentals: FCF = OCF + capex) relies on that convention.
 # Mapping each SEC concept name → (LineItem field, sign multiplier).
 LINEITEM_CONCEPT_MAP: Final[dict[str, tuple[str, int]]] = {
+    # Capex: SEC reports outflow as positive; flip to negative for LineItem.
+    # Both the legacy and modern concepts must carry the convention — see
+    # Known Risks #2 (XBRL concept evolution) for why both appear.
     "PaymentsToAcquirePropertyPlantAndEquipment": ("capital_expenditure", -1),
+    "PaymentsToAcquireProductiveAssets": ("capital_expenditure", -1),
     "PaymentsOfDividends": ("dividends_and_other_cash_distributions", -1),
     "PaymentsOfDividendsCommonStock": ("dividends_and_other_cash_distributions", -1),
 }

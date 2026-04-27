@@ -113,6 +113,7 @@ tests/
 - **Cache locality**:不缓存 derived/composite 值(例如 `market_cap = price × shares`)。缓存底层组件,让 composition 每次重算。避免分子分母两层 staleness 不一致。
 - **Distinguish legitimately empty from broken parser**:scrape/parse target 天然允许零结果(no insider trades、no 8-K in window 等)时,adapter 必须先验证页面结构是预期的那种,再返回空。如果结构缺失或异常,raise SchemaError。silent empty 严禁,因为它在下游伪装成有效数据。
 - **Corrupted fixtures must be reproducibly generated**:任何"故意破坏"的 fixture 文件必须由 fetcher 脚本(或同级脚本)以显式破坏步骤生成,且文件头加 `<!-- DELIBERATELY CORRUPTED -->` 标记。手工编辑 fixture 严禁。
+- **Mixed test inputs**:用真实 fixture 数值做 magnitude-calibration 测试(reviewer 可对照公开财报核 sanity),用合成 sentinel 做 boundary/edge 测试(精确算术必须可断言)。每种都在注释里标注来源(例如 `# from NVDA 10-K FY2024` 或 `# synthetic edge case`)。
 
 ### 1.1 cache.py(必须最先写)
 
@@ -266,6 +267,8 @@ SEC_EDGAR_USER_AGENT=Your Name your-email@example.com
 接受、记录、Phase 2 集成时再处理的运行期风险。当前实现里 raise / log 都已就位,这里只是把后续动作写下来防止丢失。
 
 1. **OpenInsider unknown transaction codes pass through with warning**:openinsider.py 在遇到 `TRANSACTION_CODE_LABELS` 之外的 Form 4 代码时,保留代码字母 + 记 warning,不 raise(理由:一行陌生代码不该让整页 100 行 fail)。Phase 2 persona 集成必须为未识别代码定义 neutral handling —— 当前 persona 脚本只检查 P/S/A/M,其他代码会被 michael-burry/news-sentiment 隐式当作"非买非卖"处理,可能会污染 sentiment 信号。
+
+2. **XBRL concept evolution**:SEC concept 会随时间被弃用/改名(例如 NVDA capex 在 FY2011 后从 `PaymentsToAcquirePropertyPlantAndEquipment` 切换到 `PaymentsToAcquireProductiveAssets`)。`LINEITEM_CONCEPT_MAP` in aggregator 必须按语义字段用 `list[str]` 的优先级回退,而不是 1:1 dict。第一个返回非空 ConceptDataPoint 列表的 concept 胜出,`logger.info` 记录哪个 concept 命中以便 traceability。
 
 ## Stretch Goals(Phase 4,只在验证矩阵失败时考虑)
 

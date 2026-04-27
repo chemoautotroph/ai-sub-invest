@@ -27,7 +27,9 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+# Default `pytest` runs unit only — integration suite hits real network and
+# must be invoked explicitly via `pytest tests/integration` (see § Phase 1.6).
+testpaths = ["tests/unit"]
 markers = [
     "unit: pure unit tests, no network",
     "integration: hits real APIs, requires SEC_EDGAR_USER_AGENT and network",
