@@ -782,16 +782,70 @@ def test_total_debt_all_empty_returns_none() -> None:
     assert out == {}
 
 
-def test_total_debt_double_count_warning_on_umbrella_and_sub_component(
+def test_total_debt_drops_subcomponents_when_umbrella_present(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """When both ``LongTermDebt`` (umbrella) AND a sub-component are reported,
-    log a warning so operators can spot the double-count case during review."""
+    """When ``LongTermDebt`` (umbrella) AND its sub-components are both
+    reported, drop the sub-components — the umbrella already includes them.
+
+    Before this dedup NVDA total_debt ran ~2x too high, since NVDA's 10-K
+    reports BOTH ``LongTermDebt`` (umbrella, e.g. $10B) AND
+    ``LongTermDebtCurrent`` + ``LongTermDebtNoncurrent`` (the same $10B
+    split into current + non-current portions). Naive summing → ~$20B.
+    """
     import logging
     facts = _synthetic_debt_facts({
-        "LongTermDebt": 100.0,
-        "LongTermDebtNoncurrent": 90.0,  # sub-component already in umbrella
+        "LongTermDebt": 100.0,           # umbrella; its sub-components total 90
+        "LongTermDebtCurrent": 30.0,
+        "LongTermDebtNoncurrent": 60.0,
+        "ShortTermBorrowings": 25.0,     # not part of LongTermDebt umbrella; keep
     })
+    with caplog.at_level(logging.INFO, logger="src.data_sources.aggregator"):
+        out = agg._values_by_fy(facts, "total_debt")
+    # Expected: umbrella (100) + ShortTermBorrowings (25) = 125
+    # NOT umbrella + sub-components + short-term = 100+30+60+25 = 215 (the bug)
+    assert out == {2023: 125.0}, f"umbrella dedup failed; got {out}"
+    # Log mentions the umbrella dedup happened
+    assert "umbrella" in caplog.text.lower()
+    assert "LongTermDebtCurrent" in caplog.text or "LongTermDebtNoncurrent" in caplog.text
+
+
+def test_total_debt_keeps_subcomponents_when_no_umbrella() -> None:
+    """When the umbrella ``LongTermDebt`` is absent, sub-components ARE summed
+    (because nothing else captures the long-term debt total)."""
+    facts = _synthetic_debt_facts({
+        "LongTermDebtCurrent": 30.0,      # no umbrella present
+        "LongTermDebtNoncurrent": 60.0,
+        "ShortTermBorrowings": 25.0,
+    })
+    out = agg._values_by_fy(facts, "total_debt")
+    # All three sum together: 30 + 60 + 25 = 115
+    assert out == {2023: 115.0}, f"expected sub-component sum without umbrella; got {out}"
+
+
+def test_total_debt_real_nvda_no_double_count_warning(
+    nvda_facts: Any, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """End-to-end on real NVDA fixture — pre-fix this would fire the
+    double-count warning every fy. Post-fix the umbrella dedup runs silently
+    (info-level log, not warning) and total_debt comes back at the umbrella
+    LongTermDebt value, not 2x.
+    """
+    import logging
     with caplog.at_level(logging.WARNING, logger="src.data_sources.aggregator"):
-        agg._values_by_fy(facts, "total_debt")
-    assert "double-count" in caplog.text
+        out = agg._values_by_fy(nvda_facts, "total_debt")
+    # Real NVDA reports both umbrella + components — verify dedup engaged
+    # and no WARNING-level double-count message fired
+    assert out, "NVDA must have at least one FY of total_debt"
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    double_count_warnings = [r for r in warnings if "double-count" in r.message]
+    assert not double_count_warnings, (
+        "umbrella dedup did not engage on NVDA; double-count warnings fired: "
+        f"{[r.message for r in double_count_warnings]}"
+    )
+    # Sanity: NVDA latest debt should be in the single-digit billions, not 20B+
+    latest_fy = max(out.keys())
+    assert 1e9 < out[latest_fy] < 2e10, (
+        f"NVDA total_debt fy={latest_fy} = {out[latest_fy]:.2e} looks wrong "
+        "(if this fires, dedup may be over-aggressive or another umbrella exists)"
+    )

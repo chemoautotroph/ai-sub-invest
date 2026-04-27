@@ -186,10 +186,8 @@ LINEITEM_CONCEPT_MAP: Final[dict[str, list[str]]] = {
     # total_debt is composed (summed) across components rather than one-of fallback,
     # because real-world debt rarely fits a single SEC concept. Aggregator's
     # _values_by_fy("total_debt") is the special-case entry point that consumes
-    # this list. Caveat: companies that report BOTH the umbrella `LongTermDebt`
-    # AND its sub-components (LongTermDebtCurrent + LongTermDebtNoncurrent)
-    # will double-count. In practice SEC filers tend to report one or the other,
-    # not both — the warning in _aggregate_debt_components flags any overlap.
+    # this list, with the umbrella-dedup logic in _aggregate_debt_components
+    # collapsing umbrella + sub-component overlap (see UMBRELLA_DECOMPOSITIONS).
     "total_debt_components": [
         "LongTermDebt",
         "LongTermDebtNoncurrent",
@@ -230,6 +228,17 @@ LINEITEM_FIELD_UNIT: Final[dict[str, str]] = {
     "earnings_per_share": "USD/shares",
     "outstanding_shares": "shares",
     "shares_outstanding": "shares",
+}
+
+
+# Umbrella-to-sub-component mapping for _aggregate_debt_components. When a
+# filer reports an umbrella concept (e.g., LongTermDebt = total long-term debt)
+# AND its sub-components (current + non-current portions), naive summing would
+# double-count. We keep the umbrella and silently drop the sub-components in
+# that case, logging which were dropped for traceability. Add a row here when
+# we discover another umbrella overlap during Phase 3 / production use.
+UMBRELLA_DECOMPOSITIONS: Final[dict[str, frozenset[str]]] = {
+    "LongTermDebt": frozenset({"LongTermDebtCurrent", "LongTermDebtNoncurrent"}),
 }
 
 
@@ -677,16 +686,21 @@ def _values_by_fy(facts: Any, field: str) -> dict[int, float]:
 
 
 def _aggregate_debt_components(facts: Any) -> dict[int, float]:
-    """Sum debt-related concepts per fiscal year.
+    """Sum debt-related concepts per fiscal year, with umbrella dedup.
 
-    Spec § Phase 0 决策 + cleanup: total_debt is a composite, not a one-of
-    fallback. We sum across all available components and log which contributed
-    for traceability. Empty (no component had data for any fy) → empty dict.
+    Composition rules:
+      1. For each fy, gather every component concept that has data.
+      2. If an umbrella concept (per ``UMBRELLA_DECOMPOSITIONS``) is present
+         AND any of its sub-components is also present → drop the
+         sub-components (the umbrella already includes them; summing both
+         would double-count). Log the dropped sub-components at INFO level.
+      3. Sum the surviving components.
 
-    Double-count caveat: an SEC filer that reports both the umbrella
-    ``LongTermDebt`` AND its components (``LongTermDebtCurrent`` +
-    ``LongTermDebtNoncurrent``) double-counts here. We log a warning when
-    that overlap is detected so it's visible without breaking the call.
+    Empty input (no component had data for any fy) → empty dict.
+
+    The umbrella-vs-sub-component overlap is exactly NVDA's reporting shape
+    in 2024-2026 10-Ks — pre-fix, NVDA's free-backend total_debt ran ~2x
+    too high. This dedup brings it back to the umbrella value.
     """
     components = LINEITEM_CONCEPT_MAP.get("total_debt_components", [])
     component_maps: dict[str, dict[int, float]] = {}
@@ -714,22 +728,23 @@ def _aggregate_debt_components(facts: Any) -> dict[int, float]:
     for m in component_maps.values():
         all_fys.update(m.keys())
     for fy in all_fys:
-        hit = [c for c, m in component_maps.items() if fy in m]
-        out[fy] = sum(component_maps[c][fy] for c in hit)
+        hit_set: set[str] = {c for c, m in component_maps.items() if fy in m}
+        # Umbrella dedup: drop sub-components if their umbrella is present.
+        for umbrella, subs in UMBRELLA_DECOMPOSITIONS.items():
+            if umbrella in hit_set and (hit_set & subs):
+                dropped = sorted(hit_set & subs)
+                logger.info(
+                    "aggregator total_debt fy=%d umbrella %r present, dropping "
+                    "sub-components %s to avoid double-count",
+                    fy, umbrella, dropped,
+                )
+                hit_set -= subs
+        kept = sorted(hit_set)
+        out[fy] = sum(component_maps[c][fy] for c in kept)
         logger.info(
             "aggregator total_debt fy=%d composed of %s = %.2e",
-            fy, hit, out[fy],
+            fy, kept, out[fy],
         )
-        # Double-count check: umbrella + sub-component pair both present
-        if "LongTermDebt" in hit and (
-            "LongTermDebtCurrent" in hit or "LongTermDebtNoncurrent" in hit
-        ):
-            logger.warning(
-                "aggregator total_debt fy=%d possible double-count: "
-                "umbrella LongTermDebt AND a sub-component both populated; "
-                "components hit = %s",
-                fy, hit,
-            )
     return out
 
 
