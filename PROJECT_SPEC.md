@@ -106,11 +106,13 @@ tests/
 
 ### Common Conventions
 
-适用于所有 Phase 1 adapter(1.2 sec_edgar、1.3 yfinance_adapter、1.4 openinsider、1.6 aggregator)。每个 adapter 实现前回头对一遍这三条。
+适用于所有 Phase 1 adapter(1.2 sec_edgar、1.3 yfinance_adapter、1.4 openinsider、1.6 aggregator)。每个 adapter 实现前回头对一遍这五条。
 
 - **Canonical empty schema**:adapter 没数据可返时(unknown ticker、no insider trades 等),返回与"有数据"相同的 schema,只是空(空 DataFrame 但仍带 OHLCV 列名;空 `list[InsiderTrade]`)。caller 只需一次检查(`df.empty` 或 `not trades`),不需要再做列存在性检查。
 - **Network/parser separation**:每个 adapter 恰好一个网络入口 `_fetch_*`,所有 parsing 是接受 bytes 或 str 输入的纯函数。测试 monkeypatch 这一个 fetcher,把真实 fixture 直接喂给 parser。
 - **Cache locality**:不缓存 derived/composite 值(例如 `market_cap = price × shares`)。缓存底层组件,让 composition 每次重算。避免分子分母两层 staleness 不一致。
+- **Distinguish legitimately empty from broken parser**:scrape/parse target 天然允许零结果(no insider trades、no 8-K in window 等)时,adapter 必须先验证页面结构是预期的那种,再返回空。如果结构缺失或异常,raise SchemaError。silent empty 严禁,因为它在下游伪装成有效数据。
+- **Corrupted fixtures must be reproducibly generated**:任何"故意破坏"的 fixture 文件必须由 fetcher 脚本(或同级脚本)以显式破坏步骤生成,且文件头加 `<!-- DELIBERATELY CORRUPTED -->` 标记。手工编辑 fixture 严禁。
 
 ### 1.1 cache.py(必须最先写)
 
@@ -258,6 +260,12 @@ SEC_EDGAR_USER_AGENT=Your Name your-email@example.com
 2. **ETF 持仓拆分**:跳过
 3. **Earnings call transcripts**:跳过
 4. **机构持仓变动(13F 解析)**:Phase 1 不做。
+
+## Known Risks
+
+接受、记录、Phase 2 集成时再处理的运行期风险。当前实现里 raise / log 都已就位,这里只是把后续动作写下来防止丢失。
+
+1. **OpenInsider unknown transaction codes pass through with warning**:openinsider.py 在遇到 `TRANSACTION_CODE_LABELS` 之外的 Form 4 代码时,保留代码字母 + 记 warning,不 raise(理由:一行陌生代码不该让整页 100 行 fail)。Phase 2 persona 集成必须为未识别代码定义 neutral handling —— 当前 persona 脚本只检查 P/S/A/M,其他代码会被 michael-burry/news-sentiment 隐式当作"非买非卖"处理,可能会污染 sentiment 信号。
 
 ## Stretch Goals(Phase 4,只在验证矩阵失败时考虑)
 

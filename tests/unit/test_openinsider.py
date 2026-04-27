@@ -89,6 +89,26 @@ def test_empty_tbody_also_returns_empty_list() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_broken_fixture_actually_differs_from_clean() -> None:
+    """Early warning: if openinsider adds attributes that make the
+    `class="tinytable"` substring no longer match the fetcher's corruption
+    regex, ``broken_NVDA_screener.html`` would silently end up identical
+    to the clean ``NVDA_screener.html`` — and the schema-drift test would
+    pass for the wrong reason (parsing succeeds because nothing was broken).
+
+    This guard fails loudly on the *next* fetcher re-run that misses the
+    corruption, before the bug propagates into trusted-but-vacuous coverage.
+    """
+    clean = (FIXTURE_DIR / "NVDA_screener.html").read_text(encoding="utf-8", errors="replace")
+    broken = (FIXTURE_DIR / "broken_NVDA_screener.html").read_text(encoding="utf-8", errors="replace")
+    assert broken != clean, "broken fixture must differ from clean — fetcher corruption did not fire"
+    assert 'class="tinytable"' not in broken, (
+        "broken fixture still contains literal class=\"tinytable\"; "
+        "the schema-drift fetcher step likely failed to match the data table "
+        "(check scripts/fetch_openinsider_fixtures.py write_broken_fixture)"
+    )
+
+
 def test_schema_drift_raises_OpenInsiderSchemaError(
     monkeypatch: pytest.MonkeyPatch, cache: Cache
 ) -> None:
