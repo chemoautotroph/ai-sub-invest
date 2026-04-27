@@ -28,6 +28,7 @@ from src.data_sources.sec_edgar import (
     ConceptDataPoint,
     EightKItem,
     FilingMeta,
+    SecEdgarNetworkError,
     SecEdgarNotFound,
     SecEdgarUserAgentMissing,
     _datapoints_for_concept,
@@ -574,3 +575,23 @@ def test_http_get_success_path_returns_response_body(
 
     monkeypatch.setattr("httpx.Client.get", fake_get)
     assert _http_get("https://www.sec.gov/anything") == b"payload-bytes"
+
+
+def test_http_connect_error_wrapped_with_helpful_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Network unreachable → SecEdgarNetworkError with firewall hint.
+
+    Why: this exact failure already cost us one round-trip in Phase 1.2
+    (when www.sec.gov / data.sec.gov weren't on the firewall whitelist).
+    A raw ``httpx.ConnectError`` doesn't suggest "check your firewall";
+    the wrapper does, saving the next person 10 minutes of confusion.
+    """
+    from src.data_sources.sec_edgar import _http_get
+
+    def fake_get(self: Any, url: str, **kw: Any) -> httpx.Response:
+        raise httpx.ConnectError("[Errno 101] Network is unreachable")
+
+    monkeypatch.setattr("httpx.Client.get", fake_get)
+    with pytest.raises(SecEdgarNetworkError, match="firewall"):
+        _http_get("https://data.sec.gov/api/xbrl/companyfacts/CIK0001045810.json")

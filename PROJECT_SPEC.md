@@ -144,7 +144,7 @@ CREATE TABLE cache (
 3. fiscal year ≠ calendar year(NVDA 财年 1 月底结束):返回的 timestamp 用 `end` 字段不是 `filed`
 4. 缺失中间季度(有些公司不报 Q3):返回的列表跳过缺失,**不要补 0**
 5. 单位换算(`USD/shares` 表示 per-share 数据,不要乘股数)
-6. 修订(restatement):新 fiscal period 出现时旧的同 period 数据被覆盖,需要 dedup by (`end`, `fp`, `fy`),保留 `filed` 最新的
+6. 修订(restatement):新 fiscal period 出现时旧的同 period 数据被覆盖,需要 dedup by (`start`, `end`, `fp`, `fy`)(`start` 是 fact 段的起始日,quarterly 与 YTD 在同一 (`end`, `fp`, `fy`) 下 `start` 不同,必须分别保留),保留 `filed` 最新的
 
 **测试 fixture**:从真实 SEC 拉 NVDA、AAPL、BRK.A 三家的 companyfacts JSON,存到 `tests/unit/fixtures/sec/`,unit test 全部 mock 这些文件。BRK.A 选进来是因为它的 fiscal year 跟其他不同,且报表科目分类特殊。
 

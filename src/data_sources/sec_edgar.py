@@ -76,6 +76,15 @@ class SecEdgarNotFound(SecEdgarError):
     """Raised when SEC returns 404 or a ticker/concept lookup misses."""
 
 
+class SecEdgarNetworkError(SecEdgarError):
+    """Raised when the SEC host is unreachable.
+
+    Wraps ``httpx.ConnectError`` with a hint about firewall whitelist drift —
+    the most common cause when adding a new SEC subdomain or running in a
+    locked-down container. Saves debug time vs. a raw connect-error trace.
+    """
+
+
 # ---------------------------------------------------------------------------
 # Pydantic models
 # ---------------------------------------------------------------------------
@@ -270,12 +279,18 @@ def _datapoints_for_concept(
 
 def _http_get(url: str) -> bytes:
     headers = {"User-Agent": _required_user_agent()}
-    with httpx.Client(timeout=_HTTP_TIMEOUT_SEC, headers=headers) as client:
-        resp = client.get(url, headers=headers)
-        if resp.status_code == 404:
-            raise SecEdgarNotFound(f"SEC 404 for {url}")
-        resp.raise_for_status()
-        return resp.content
+    try:
+        with httpx.Client(timeout=_HTTP_TIMEOUT_SEC, headers=headers) as client:
+            resp = client.get(url, headers=headers)
+            if resp.status_code == 404:
+                raise SecEdgarNotFound(f"SEC 404 for {url}")
+            resp.raise_for_status()
+            return resp.content
+    except httpx.ConnectError as e:
+        raise SecEdgarNetworkError(
+            f"Cannot reach {url}. If new SEC domain, may need firewall "
+            f"whitelist update. Original: {e}"
+        ) from e
 
 
 def _fetch_ticker_map() -> bytes:
@@ -340,7 +355,9 @@ def _get_submissions_dict(cik: str, *, cache: Cache | None = None) -> dict[str, 
 
     TTL reuses ``SEC_EDGAR_COMPANY_FACTS`` (1d) — both endpoints are SEC
     daily-refreshed JSON; no need for a dedicated constant until we observe
-    different freshness behavior in production.
+    different freshness behavior in production. 1d TTL adequate for
+    daily/weekly batch use; reduce to 1h if intraday 8-K event monitoring
+    is added.
     """
     cache = cache or Cache()
     cik_padded = _normalize_cik(cik)
