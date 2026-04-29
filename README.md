@@ -47,22 +47,85 @@ cd ai-sub-invest
 # Install dependencies (requires Python 3.11+)
 uv sync
 
-# Set up API key
+# Set up environment
 cp .env.example .env
-# Edit .env and add: FINANCIAL_DATASETS_API_KEY=your-key
+# Edit .env: set FINANCIAL_DATASETS_API_KEY (paid backend) OR
+#            set USE_FREE_BACKEND=1 + SEC_EDGAR_USER_AGENT="Name email" (free backend)
 
 # Optional: Install SDK for programmatic access
 uv add claude-agent-sdk
 ```
 
+## Run in Dev Container (sandboxed Claude Code)
+
+The repo ships with an Anthropic-style Claude Code sandbox under `.devcontainer/`.
+The container runs Claude with `--dangerously-skip-permissions` behind an iptables
+whitelist (Anthropic API, GitHub, npm, SEC EDGAR, OpenInsider, Yahoo Finance).
+
+Prereqs: Docker Engine running on the host, plus the devcontainer CLI:
+
+```bash
+npm install -g @devcontainers/cli
+```
+
+One-shot launch (build + exec Claude inside):
+
+```bash
+./start_docker.sh
+```
+
+Equivalent manual commands:
+
+```bash
+# Build image + start container (reads .devcontainer/devcontainer.json)
+devcontainer up --workspace-folder .
+
+# Drop into a shell
+devcontainer exec --workspace-folder . zsh
+
+# Or launch Claude Code directly
+devcontainer exec --workspace-folder . claude --dangerously-skip-permissions
+
+# Force a rebuild after changing the Dockerfile or firewall script
+devcontainer up --workspace-folder . --remove-existing-container
+```
+
+What gets mounted into the container:
+
+| Host path | Container path | Purpose |
+|---|---|---|
+| project root | `/workspace` | code (delegated bind) |
+| `~/.claude` | `/home/node/.claude` | Claude config + memory persistence |
+| `~/.ssh` (ro) | `/home/node/.ssh` | git push / SSH keys |
+| `~/.gitconfig` (ro) | `/home/node/.gitconfig` | git identity |
+
+The `postStartCommand` runs `.devcontainer/init-firewall.sh` to install the
+iptables whitelist — that's why `--cap-add=NET_ADMIN` and `NET_RAW` are set in
+`devcontainer.json`. If you add a new data source domain, whitelist it there
+and rebuild.
+
 ## Free Backend (no paid API required)
 
-Set `USE_FREE_BACKEND=1` and `SEC_EDGAR_USER_AGENT="Name email"` in `.env` to
-route all six `src/tools/api.py` data calls through `src/data_sources/aggregator`,
-which assembles the same Pydantic shapes from SEC EDGAR XBRL + yfinance + OpenInsider.
-Persona scripts work unchanged. See [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) for
-the full enable/disable instructions, env var requirements, firewall whitelist,
-and known limitations.
+This fork adds a free-data path so you can run the full persona suite without a
+`financialdatasets.ai` subscription. Set in `.env`:
+
+```bash
+USE_FREE_BACKEND=1
+SEC_EDGAR_USER_AGENT="Your Name your-email@example.com"
+```
+
+All six `src/tools/api.py` data calls then route through `src/data_sources/aggregator`,
+which assembles the same Pydantic shapes from:
+
+- **SEC EDGAR XBRL** — companyfacts + submissions (fundamentals, line items)
+- **yfinance** — OHLCV, market cap, basic info
+- **OpenInsider** — insider trades (HTML scraper)
+
+Persona scripts work unchanged. See [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md)
+for the full enable/disable flow, env var requirements, firewall whitelist, and
+known limitations (e.g. SEC EDGAR rate limits, ticker coverage gaps). The
+verification matrix (5 tickers × 7 personas A/B paid-vs-free) lives in
+[`docs/verification_report.md`](docs/verification_report.md).
 
 ## Usage
 
@@ -190,20 +253,37 @@ Portfolio manager aggregation returns:
 ```
 consensusai/
 ├── .claude/
-│   └── skills/           # 21 analyst skills
+│   └── skills/                # 21 analyst skills
 │       ├── warren-buffett/
 │       ├── ben-graham/
 │       ├── portfolio-manager/
 │       └── ...
+├── .devcontainer/             # Claude Code sandbox (Dockerfile + firewall)
+├── docs/
+│   ├── USER_GUIDE.md          # free-backend enable/disable, env vars
+│   ├── data_inventory.md      # paid-vs-free field-level audit (Phase 0)
+│   └── verification_report.md # 5 tickers × 7 personas A/B parity
+├── scripts/
+│   ├── fetch_*_fixtures.py    # snapshot real API responses for tests
+│   └── verify_free_backend.py # parity harness (paid vs free)
 ├── src/
 │   ├── data/
-│   │   ├── cache.py      # API response caching
-│   │   └── models.py     # Pydantic models
+│   │   ├── cache.py           # in-memory cache (paid backend)
+│   │   └── models.py          # Pydantic models
+│   ├── data_sources/          # free backend (added in this fork)
+│   │   ├── cache.py           # SQLite cache with TTL (PROJECT_SPEC pinned)
+│   │   ├── sec_edgar.py       # XBRL companyfacts / submissions adapter
+│   │   ├── yfinance_adapter.py
+│   │   ├── openinsider.py     # HTML scraper
+│   │   ├── computed.py        # 8 pure ratio functions
+│   │   └── aggregator.py      # mirrors src/tools/api.py shape
 │   ├── tools/
-│   │   └── api.py        # Financial data API
+│   │   └── api.py             # data API (routes to free backend via env)
 │   ├── utils/
-│   │   └── api_key.py    # API key validation
-│   └── sdk_main.py       # SDK entry point
+│   │   └── api_key.py
+│   └── sdk_main.py            # SDK entry point
+├── tests/                     # unit + parity tests
+├── start_docker.sh            # one-shot: devcontainer up + exec claude
 ├── pyproject.toml
 └── README.md
 ```
